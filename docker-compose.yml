@@ -1,0 +1,53 @@
+name: smartvocab
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16          # Postgres 16 + pgvector (used from Phase 9)
+    environment:
+      POSTGRES_USER: smartvocab
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartvocab}
+      POSTGRES_DB: smartvocab
+    volumes: [pgdata:/var/lib/postgresql/data]
+    ports: ["${POSTGRES_HOST_PORT:-5433}:5432"]   # host port 5433 avoids clashing with a local Postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartvocab -d smartvocab"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://smartvocab:${POSTGRES_PASSWORD:-smartvocab}@postgres:5432/smartvocab
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 10s
+      retries: 6
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      BACKEND_URL: http://backend:8000
+    depends_on:
+      backend: { condition: service_healthy }
+    ports: ["3000:3000"]
+
+volumes:
+  pgdata:
+  redisdata:
